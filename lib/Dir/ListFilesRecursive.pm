@@ -1,14 +1,16 @@
 package Dir::ListFilesRecursive; ## Static functions to find files in directories.
 
 
-our $VERSION='0.01';
+our $VERSION='0.02';
 
 
 use strict;
 
 use vars qw(@ISA @EXPORT %EXPORT_TAGS $VERSION);
 use Exporter; 
-
+use File::Spec::Functions;
+ 
+ 
 @ISA = qw(Exporter);
 
 %EXPORT_TAGS = ( all => [qw(
@@ -278,7 +280,7 @@ sub _add_path_to_array{
   my $dir_ref=shift;
 
     foreach my $z (@$dir_ref){
-      $z=$path.'/'.$z;
+      $z=catfile($path,$z);
     }
 }
 
@@ -288,8 +290,10 @@ sub _sub_path_from_array{
   my $path=shift;
   my $dir_ref=shift;
 
+  my $slash = catdir('','');
+  
     foreach my $z (@$dir_ref){
-      $z=~ s/^$path\/?//;
+      $z=~ s/^\Q$path\E[\Q$slash\E]?//;
     }
 }
 
@@ -447,4 +451,3 @@ You can redistribute it and/or modify it under the conditions of LGPL.
 
 
 =cut
-
