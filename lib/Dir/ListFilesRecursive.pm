@@ -1,11 +1,11 @@
 package Dir::ListFilesRecursive; ## Static functions to find files in directories.
 
 
-our $VERSION='0.02';
+our $VERSION='0.03';
 
 
 use strict;
-
+use Carp;
 use vars qw(@ISA @EXPORT %EXPORT_TAGS $VERSION);
 use Exporter; 
 use File::Spec::Functions;
@@ -98,7 +98,7 @@ Exporter::export_ok_tags('all');
 #  # /etc/passwd
 #
 # It does not return directory names. (that means 'flat'),
-# only the files of given directory.
+# only the files of given directory, no content of subfolders.
 #
 # You can set key value pairs to use further options.
 # Please see chapter 'options'.
@@ -106,20 +106,21 @@ Exporter::export_ok_tags('all');
 # It returns an array or arrayref, depending on context.
 #
 sub list_files_flat{ # array|arrayref ($path,%options)
-  my $path=shift;
-  my %para=@_;
-  my @files;
+    my $path  = shift or croak "needs path";;
+    my %param = @_;
+    my @files;
+    
+    # extend params
+    my $param2 = _complete_params( \%param );
+    $param2->{'path'} = $path;
+    @files = grep { _does_filter_match_file( $_ , $param2 ) } _scan_dir( $path );
+
+    if ( ! $param{'no_path'} ){
+        _add_path_to_array( $path, \@files );
+    }
 
 
-
-  @files=list_files_no_path($path);
-  _add_path_to_array($path,\@files);
-  _filter_file_array(\@files,%para);
-
-  @files=sort @files;
-
-
-  return wantarray ? @files : \@files;
+    return wantarray ? @files : \@files;
 }
 
 
@@ -145,45 +146,48 @@ sub list_files_flat{ # array|arrayref ($path,%options)
 #
 # It returns an array or arrayref, depending on context.
 #
-sub list_files_recursive{ # array|arrayref ($path,%options)
-  my $path=shift;
-  my %para=@_;
-  my @files;
+sub list_files_recursive {  # array|arrayref ($path,%options)
+    my $path = shift or croak "needs path";
+    my %param = @_;
+    my @files;
 
-  @files=_list_files_recursive_all($path);
-  _filter_file_array(\@files,%para,path=>$path);
-  @files=sort @files;
+    # extend params
+    my $param2 = _complete_params( \%param );
+    # $paths for _does_filter_match_file() not needed because list is with paths
+    @files = grep { _does_filter_match_file( $_ , $param2 ) } _list_files_recursive_nofilter( $path );
 
-  return wantarray ? @files : \@files;
-}
-
-
-
-
-# that is the real recursive function to get all files.
-sub _list_files_recursive_all{
-  my $path=shift;
-  my %para=@_;
-  my @files;
-  my @filesm;
-
-
-  @files=list_files_no_path($path);
-
-  _filter_file_array(\@files,%para);
-  _add_path_to_array($path,\@files);
-
-  foreach my $d (@files){
-    if (-d $d){
-      push @filesm,_list_files_recursive_all($d);
+    if ( $param{'no_path'} ){
+        _sub_path_from_array( $path, \@files );
     }
-  }
-  push @files,@filesm;
 
-  
-  
-  return @files;
+    return wantarray ? @files : \@files;
 }
+
+
+sub _list_files_recursive_nofilter {  # array|arrayref ($path)
+    my $path = shift or croak "needs path";;
+    my @files;
+    my @filesm;
+
+    @files = _scan_dir( $path );
+
+    _add_path_to_array( $path, \@files );
+
+
+    # step down a directory
+    foreach my $d ( @files ){
+        if ( -d $d ){
+          push @filesm, _list_files_recursive_nofilter( $d ); # self call - recursive
+        }
+    }
+    push @files, @filesm;
+
+    return @files;
+}
+
+
+
+
 
 
 
@@ -195,80 +199,126 @@ sub _list_files_recursive_all{
 #  # hosts
 #  # passwd
 #
-# It does not return directory names.
-#
 # You can set key value pairs to use further options.
 # Please see chapter 'options'.
 #
 # It returns an array or arrayref, depending on context.
 sub list_files_no_path{ # array|arrayref ($path,%options)
-  my $path=shift;
-  my %para=@_;
-  my @files;
-  my @nf;
+    my $path = shift or croak "needs path";;
+    my %param = @_;
+    my @files;
+    my @nf;
 
-  opendir(FDIR,$path);
-    @files=readdir FDIR;
-  closedir(FDIR);
-
-  _filter_file_array(\@files,%para);
-
-  foreach my $d (@files){
-    if ($d!~ m/^\.\.?/){push @nf,$d};
-  }
-
-  return wantarray ? @nf : \@nf;
+    @files = list_files_recursive( $path, %param );
+   
+    foreach my $z (@files){
+      _sub_path_from_file( $path, \$z );
+    }
+    
+    
+      
+    return wantarray ? @files : \@files;
 }
 
 
 
-# helper method to filter for options.
-# is filtering the given array with options.
-sub _filter_file_array{
-  my $dir_ref=shift;
-  my %para=@_;
-  my @nf;
-  my $path=$para{path};
+# scanns a dir simple and flat
+sub _scan_dir {
+    my $path = shift or croak "needs path";
+    my @files;
+    
+    opendir( FDIR, $path );
+    @files = readdir FDIR; ;
+    closedir( FDIR );
 
-  no warnings;
+    # remove . and ..
+    if ($files[0] =~ m/^\.\.?$/ ){ shift @files };
+    if ($files[0] =~ m/^\.\.?$/ ){ shift @files };
 
-  if ($para{only_folder} ne ''){$para{no_files}=1};
-  if ($para{only_folders} ne ''){$para{no_files}=1};
-  if ($para{only_dir} ne ''){$para{no_files}=1};
-  if ($para{only_dirs} ne ''){$para{no_files}=1};
-  if ($para{only_directories} ne ''){$para{no_files}=1};
+    
+    return wantarray ? @files : \@files;
+}
 
-  if ($para{only_files} ne ''){$para{no_dir}=1};
-  
-  
-  foreach my $i (@$dir_ref){
-    my $ok=1;
-    if ($i=~ m/^\.\.?$/){$ok=0};
-        
-    if (($para{no_files} ne '') && (!-d $i)){$ok=0};
-    if (($para{no_dir} ne '') && (-d $i)){$ok=0};
-    if (($para{no_dirs} ne '') && (-d $i)){$ok=0};
-    if (($para{no_directories} ne '') && (-d $i)){$ok=0};
-    if (($para{no_folder} ne '') && (-d $i)){$ok=0};
-    if (($para{no_folders} ne '') && (-d $i)){$ok=0};
-    if (($para{no_hidden_files} ne '') && ($i=~ m/^\./)){$ok=0};
-    if (($para{no_hidden} ne '') && ($i=~ m/^\./)){$ok=0};
 
-    my $ext=lc($para{ext}) || lc($para{extension});
-    if (exists $para{ext}){
-      if ($i=~ m/\.$ext$/i){$ok=1}else{$ok=0};
+
+
+sub _complete_params {
+    my $p1 = shift;
+    my $p2 = {};  
+    
+    # copy params
+    %{ $p2 } = %{ $p1 };
+
+    if ($p1->{only_folder})       {$p2->{no_files}=1};
+    if ($p1->{only_folders})      {$p2->{no_files}=1};
+    if ($p1->{only_dir})          {$p2->{no_files}=1};
+    if ($p1->{only_dirs})         {$p2->{no_files}=1};
+    if ($p1->{only_directories})  {$p2->{no_files}=1};
+
+    if ($p1->{only_files})        {$p2->{no_dir}=1};
+
+    return $p2;
+}
+
+
+
+sub _does_filter_match_file{
+    my $f     = shift;
+    my $param = shift;
+    my @nf;
+    my $path  = $param->{path};  
+    my $ok = 1;
+    
+    
+    my $chkf_d;
+    
+    if ( $path ){
+        $chkf_d = -d catfile($path,$f);
+    }else{
+        $chkf_d = -d $f;
+    }
+    
+    
+    if (($param->{no_files} ne '') && ( ! $chkf_d )){
+        #$ok = 0;
+        return 0;
     };
 
-    if ($ok == 1){push @nf,$i};
-  }
-  @$dir_ref=@nf;
-  undef @nf;
+    if ( $chkf_d ){
 
-  if ($para{no_path} ne ''){
-    _sub_path_from_array($path,$dir_ref);
-  }
+        if ($param->{no_dir})        { return 0 };
+        if ($param->{no_dirs})       { return 0 };
+        if ($param->{no_directories}){ return 0 };
+        if ($param->{no_folder})     { return 0 };
+        if ($param->{no_folders})    { return 0 };   
 
+        if ( !$ok ){
+            return 0;
+        }
+        
+        
+    }
+
+    
+    
+    if ( ( ($param->{no_hidden}) || ($param->{no_hidden_files}) ) 
+            && ( index($f,'.') == 0 )
+        ){
+            return 0;
+        };
+    
+
+    if ( exists $param->{ext} ){
+      my $ext = lc($param->{ext}) || lc($param->{extension});
+      if ( $f=~ m/\.$ext$/i ){ $ok=1 }else{ $ok=0 };
+    }
+
+    return $ok;
 }
+
+
+
+
 
 
 
@@ -293,9 +343,21 @@ sub _sub_path_from_array{
   my $slash = catdir('','');
   
     foreach my $z (@$dir_ref){
-      $z=~ s/^\Q$path\E[\Q$slash\E]?//;
+      _sub_path_from_file( $path, \$z );
     }
 }
+
+
+sub _sub_path_from_file{
+  my $path=shift or croak "needs path";
+  my $file_ref=shift or croak "needs fileref";
+
+  my $slash = catdir('','');
+  
+  $$file_ref =~ s/^\Q$path\E[\Q$slash\E]?//;
+  
+}
+
 
 
 
