@@ -1,7 +1,7 @@
 package Dir::ListFilesRecursive; ## Static functions to find files in directories.
 
 
-our $VERSION='0.03';
+our $VERSION='0.04';
 
 
 use strict;
@@ -171,6 +171,9 @@ sub _list_files_recursive_nofilter {  # array|arrayref ($path)
 
     @files = _scan_dir( $path );
 
+    ## remove . and ..
+    @files = grep { $_ ne '.' and $_ ne '..' } @files; 
+
     _add_path_to_array( $path, \@files );
 
 
@@ -198,6 +201,8 @@ sub _list_files_recursive_nofilter {  # array|arrayref ($path)
 #  # may return files like:
 #  # hosts
 #  # passwd
+#
+#  Furher subpaths will be returned like /etc/apache.
 #
 # You can set key value pairs to use further options.
 # Please see chapter 'options'.
@@ -269,6 +274,7 @@ sub _does_filter_match_file{
     my $path  = $param->{path};  
     my $ok = 1;
     
+    $param->{no_files} //= '';
     
     my $chkf_d;
     
